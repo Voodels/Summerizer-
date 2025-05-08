@@ -250,3 +250,85 @@ For best results, provide:
 2. Set up the development environment
 3. Implement the basic CLI structure
 4. Create the video downloading component
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### May 8 : Current Status 
+# VideoInsight CLI Project Status Report
+
+## ✅ Completed Components
+
+- **Project Structure**: Directory structure set up
+- **Configuration System**: config.py with load/save functionality 
+- **CLI Framework**: Basic commands framework implemented
+- **Downloader**: YouTube video downloading with yt-dlp
+- **State Management**: Job tracking and persistence system
+
+## 🔄 In Progress Components
+
+- **Job Orchestration Engine**: Foundation with state.py
+- **Media Acquisition**: Basic downloading implemented
+- **Phase 1 MVP**: Working toward basic end-to-end functionality
+
+## 📋 Current Progress on Checklist
+
+### 1. Core Architecture Components
+- [✅] CLI interface implementation (basic version)
+- [✅] Configuration management system
+- [🔄] Job orchestration engine (foundation with state.py)
+- [🔄] Media acquisition (partial - downloading completed)
+- [ ] Chunking mechanism for large videos
+- [ ] Transcription engine
+
+### 2. Technical Implementation
+- [✅] Project structure and dependency management
+- [✅] Development environment configuration
+- [ ] Logging and observability framework
+- [ ] Testing infrastructure
+
+### 3. Implementation Phases
+- [🔄] Phase 1: Core Functionality (MVP)
+  - [✅] Basic video downloading
+  - [ ] Simple transcription pipeline
+  - [ ] Rudimentary note generation
+  - [✅] Command-line interface
+
+## 📝 Next Steps
+
+1. **Audio Chunking System** (Next immediate task)
+   - Extract audio from downloaded videos
+   - Split long audio into manageable chunks
+   - Handle chunk overlaps for seamless transcription
+   - Implement chunk metadata tracking
+
+2. **Basic Transcription Engine**
+   - Integrate Whisper model for speech-to-text
+   - Process audio chunks and maintain timestamps
+   - Merge transcribed chunks into cohesive text
+
+3. **Simple Markdown Generation**
+   - Convert transcriptions to basic markdown format
+   - Include video metadata and timestamps
+   - Create simple structure based on timestamps
+
+## 💻 Let's Start Coding the Chunking System
+
+Let's implement the chunking.py module now:
+
+```python
+"""
+Audio chunking functionality for VideoInsight.
