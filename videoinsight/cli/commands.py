@@ -229,14 +229,34 @@ def process(
                         
                         if result:
                             console.print(f"[bold green]Transcript saved:[/bold green] {transcript_path}")
+                        
+                        # Start content analysis
+                        console.print("[cyan]Analyzing content...[/cyan]")
+                        try:
+                            from videoinsight.core.analysis import analyze_transcription
+                            analysis_results = analyze_transcription(job_id)
+                            if analysis_results:
+                                console.print("[bold green]Content analysis completed[/bold green]")
+                                
+                                # Generate markdown notes
+                                console.print("[cyan]Generating markdown notes...[/cyan]")
+                                from videoinsight.core.markdown import generate_markdown
+                                markdown_path = generate_markdown(job_id, output)
+                                
+                                if markdown_path:
+                                    console.print(f"[bold green]Notes generated:[/bold green] {markdown_path}")
+                                else:
+                                    console.print("[bold red]Error:[/bold red] Failed to generate markdown notes")
+                            else:
+                                console.print("[bold red]Error:[/bold red] Content analysis failed")
+                        except Exception as e:
+                            console.print(f"[bold red]Error during analysis:[/bold red] {str(e)}")
                     else:
                         console.print("[bold red]Error:[/bold red] Failed to merge transcriptions")
                 except Exception as e:
                     console.print(f"[bold red]Error merging transcriptions:[/bold red] {str(e)}")
             else:
                 console.print("[bold red]Transcription was not completed successfully.[/bold red]")
-                
-            # TODO: Add analysis and markdown generation steps here
                 
         else:
             console.print("[yellow]Automatic transcription is disabled in configuration.[/yellow]")
@@ -375,13 +395,36 @@ def resume(
         # Resume analysis if needed
         if ((transcription_status == "completed" or transcription_status == "completed_with_errors") and 
             (analysis_status != "completed" or force)):
-            console.print("[yellow]Analysis step not yet implemented.[/yellow]")
             
+            console.print("[cyan]Running content analysis...[/cyan]")
+            
+            try:
+                from videoinsight.core.analysis import analyze_transcription
+                analysis_results = analyze_transcription(job_id)
+                if analysis_results:
+                    console.print("[bold green]Content analysis completed[/bold green]")
+                else:
+                    console.print("[bold red]Error:[/bold red] Content analysis failed")
+            except Exception as e:
+                console.print(f"[bold red]Error during analysis:[/bold red] {str(e)}")
+                
         # Resume markdown generation if needed
         if (analysis_status == "completed" and 
             (markdown_status != "completed" or force)):
-            console.print("[yellow]Markdown generation not yet implemented.[/yellow]")
             
+            console.print("[cyan]Generating markdown notes...[/cyan]")
+            try:
+                from videoinsight.core.markdown import generate_markdown
+                output_path = job["output_path"]
+                markdown_path = generate_markdown(job_id, output_path)
+                
+                if markdown_path:
+                    console.print(f"[bold green]Notes generated:[/bold green] {markdown_path}")
+                else:
+                    console.print("[bold red]Error:[/bold red] Failed to generate markdown notes")
+            except Exception as e:
+                console.print(f"[bold red]Error generating markdown:[/bold red] {str(e)}")
+        
         console.print(f"[bold]Job completed to stage:[/bold] {get_current_stage(job)}")
 
     except Exception as e:
