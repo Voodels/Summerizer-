@@ -1,0 +1,48 @@
+# Download settings
+download:
+  format: "bestaudio/best"                  # Format to download from YouTube
+  output_template: "downloads/%(id)s.%(ext)s"  # Output file naming pattern
+  retries: 3                                # Number of retries for download
+  timeout: 60                               # Connection timeout in seconds
+  rate_limit: 0                             # Download rate limit in bytes/sec (0 for no limit)
+
+# Transcription settings
+transcription:
+  model: "base"                             # Whisper model size: tiny, base, small, medium, large
+  language: null                            # Language code (null for auto-detection)
+  chunk_size: 30                            # Chunk size in minutes
+  overlap: 5                                # Overlap between chunks in seconds
+  beam_size: 5                              # Beam size for sampling
+  temperature: 0                            # Temperature for sampling
+  word_timestamps: true                     # Generate word-level timestamps
+  threads: 4                                # Number of processing threads
+
+# Analysis settings
+analysis:
+  min_topic_length: 60                      # Minimum topic segment length in seconds
+  max_topic_length: 600                     # Maximum topic segment length in seconds
+  keywords_per_topic: 5                     # Number of keywords to extract per topic
+  summary_ratio: 0.2                        # Summary length as a ratio of original text
+  min_concept_relevance: 0.5                # Minimum relevance score for concepts
+  entity_types: ["PERSON", "ORG", "GPE", "EVENT", "WORK_OF_ART"]  # Entity types to extract
+
+# Markdown settings
+markdown:
+  title_format: "# {video_title}"
+  section_levels: 3                         # Maximum heading levels to use
+  include_timestamps: true                  # Include timestamps in headings
+  timestamp_format: "[{h}:{m}:{s}]"         # Format for timestamps
+  code_block_langs: ["python", "javascript", "bash", "cpp", "java"]  # Languages for code blocks
+  include_toc: true                         # Include table of contents
+  link_timestamps: true                     # Make timestamps clickable (links to video)
+
+# System settings
+system:
+  data_dir: ".videoinsight"                # Directory for application data
+  log_file: ".videoinsight/logs/videoinsight.log"  # Log file path
+  log_level: "INFO"                         # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  cache_dir: ".videoinsight/cache"         # Cache directory
+  max_cache_size: 5120                      # Maximum cache size in MB
+  cleanup_downloads: true                  # Remove downloads after processing
+  max_memory: 0                             # Max memory usage in MB (0 = no limit)
+  max_cpu: 0                                # Max CPU usage % (0 = no limit)
