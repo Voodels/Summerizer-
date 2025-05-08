@@ -4,6 +4,8 @@ VideoInsight CLI command definitions.
 import os
 import sys
 import uuid
+import threading
+import time
 from typing import Optional
 import typer
 from rich.console import Console
@@ -17,7 +19,7 @@ from rich.progress import (
 
 from videoinsight.cli.config import load_config, save_config
 from videoinsight.core.downloader import download_video
-from videoinsight.utils.state import create_job, get_job, list_jobs
+from videoinsight.utils.state import create_job, get_job, list_jobs, update_job_step
 
 # Create Typer app
 app = typer.Typer(
@@ -92,10 +94,154 @@ def process(
         console.print(f"[bold green]Download complete:[/bold green] {video_info['title']}")
         console.print(f"Duration: {video_info['duration_string']}")
 
-        # TODO: Transcription and analysis
-        console.print("[yellow]Transcription and analysis not yet implemented.[/yellow]")
-        console.print(f"[bold]Job ID for resuming:[/bold] {job_id}")
+        # Extract audio and create chunks
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=console,
+        ) as progress:
+            # Create data directories
+            audio_dir = os.path.join(os.path.expanduser("~"), ".videoinsight", "audio", job_id)
+            chunks_dir = os.path.join(os.path.expanduser("~"), ".videoinsight", "chunks", job_id)
+            
+            # Extract audio task
+            extract_task = progress.add_task("[cyan]Extracting audio...", total=100)
+            
+            from videoinsight.utils.chunking import extract_audio, create_smart_chunks
+            
+            # Extract audio
+            audio_path = extract_audio(
+                video_path=video_info['filepath'],
+                output_dir=audio_dir,
+                job_id=job_id
+            )
+            
+            if not audio_path:
+                console.print("[bold red]Error:[/bold red] Failed to extract audio from video")
+                sys.exit(1)
+            
+            progress.update(extract_task, completed=100, description="[green]Audio extracted")
+            
+            # Create chunks task
+            chunk_task = progress.add_task("[cyan]Creating audio chunks...", total=100)
+            
+            # Use smart chunking for better segment boundaries
+            chunks = create_smart_chunks(
+                audio_path=audio_path,
+                output_dir=chunks_dir,
+                job_id=job_id,
+                target_duration=config["transcription"]["chunk_size"] * 60,  # Convert from minutes to seconds
+                overlap=config["transcription"]["overlap"]
+            )
+            
+            if not chunks:
+                console.print("[bold red]Error:[/bold red] Failed to create audio chunks")
+                sys.exit(1)
+            
+            progress.update(chunk_task, completed=100, description=f"[green]Created {len(chunks)} chunks")
 
+        # Check if we should start transcription
+        if config.get("auto_transcribe", True):
+            try:
+                # Try importing the module to check if it's installed
+                import faster_whisper
+                has_whisper = True
+            except ImportError:
+                try:
+                    import whisper
+                    has_whisper = True
+                except ImportError:
+                    has_whisper = False
+            
+            if not has_whisper:
+                console.print("[bold yellow]Warning:[/bold yellow] Transcription libraries not installed.")
+                console.print("Install with: pip install faster-whisper")
+                console.print(f"[bold]Job ID for resuming later:[/bold] {job_id}")
+                return job_id
+            
+            # Start transcription
+            console.print("[bold]Starting transcription...[/bold]")
+            
+            from videoinsight.core.transcription import transcribe_job, merge_transcriptions
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                # Start transcription task
+                trans_task = progress.add_task("[cyan]Transcribing audio chunks...", total=None)
+                
+                # Start transcription in a separate thread so we can show progress
+                def run_transcription():
+                    try:
+                        transcribe_job(job_id)
+                    except Exception as e:
+                        console.print(f"[bold red]Transcription error:[/bold red] {str(e)}")
+                
+                trans_thread = threading.Thread(target=run_transcription)
+                trans_thread.start()
+                
+                # Monitor progress
+                last_status = None
+                while trans_thread.is_alive():
+                    job = get_job(job_id)
+                    if job:
+                        status = job["steps"]["transcription"]["status"]
+                        if status != last_status:
+                            if status == "completed":
+                                progress.update(trans_task, description="[green]Transcription completed")
+                            elif status == "completed_with_errors":
+                                progress.update(trans_task, description="[yellow]Transcription completed with some errors")
+                            elif status == "failed":
+                                progress.update(trans_task, description="[red]Transcription failed")
+                            last_status = status
+                    time.sleep(1)
+                
+                trans_thread.join()
+            
+            # Get final job status
+            job = get_job(job_id)
+            transcription_status = job["steps"]["transcription"]["status"]
+            
+            if transcription_status in ["completed", "completed_with_errors"]:
+                # Merge transcriptions
+                console.print("[cyan]Merging transcriptions...[/cyan]")
+                try:
+                    merged = merge_transcriptions(job_id)
+                    if merged:
+                        console.print("[bold green]Transcriptions merged successfully[/bold green]")
+                        
+                        # Save transcription to file
+                        from videoinsight.core.transcription import save_transcription_to_file
+                        output_dir = os.path.dirname(output)
+                        if not output_dir:
+                            output_dir = "."
+                        
+                        # Save both raw transcript and final output
+                        transcript_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(output))[0]}_transcript.txt")
+                        result = save_transcription_to_file(job_id, transcript_path)
+                        
+                        if result:
+                            console.print(f"[bold green]Transcript saved:[/bold green] {transcript_path}")
+                    else:
+                        console.print("[bold red]Error:[/bold red] Failed to merge transcriptions")
+                except Exception as e:
+                    console.print(f"[bold red]Error merging transcriptions:[/bold red] {str(e)}")
+            else:
+                console.print("[bold red]Transcription was not completed successfully.[/bold red]")
+                
+            # TODO: Add analysis and markdown generation steps here
+                
+        else:
+            console.print("[yellow]Automatic transcription is disabled in configuration.[/yellow]")
+        
+        console.print(f"[bold]Job ID for resuming:[/bold] {job_id}")
         return job_id
 
     except Exception as e:
@@ -106,6 +252,7 @@ def process(
 @app.command()
 def resume(
     job_id: str = typer.Argument(..., help="Job ID to resume"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force reprocessing of completed steps"),
 ):
     """
     Resume a previously interrupted job.
@@ -118,12 +265,142 @@ def resume(
 
         console.print(f"[bold green]Resuming job:[/bold green] {job_id}")
         console.print(f"[bold]Video URL:[/bold] {job['url']}")
-        # TODO: Resume functionality
-        console.print("[yellow]Resume functionality not yet implemented.[/yellow]")
+        
+        # Check job status
+        download_status = job["steps"]["download"]["status"]
+        transcription_status = job["steps"]["transcription"]["status"]
+        analysis_status = job["steps"]["analysis"]["status"]
+        markdown_status = job["steps"]["markdown"]["status"]
+        
+        config = job["config"]
+        
+        # Resume download if needed
+        if download_status != "completed" or force:
+            console.print("[cyan]Resuming download...[/cyan]")
+            # Code to resume download
+            # This would typically retrieve the video info and check if the file exists
+            
+            # For now, just mark as incomplete if it's not completed
+            if download_status != "completed":
+                console.print("[yellow]Download step is incomplete. Please restart the process.[/yellow]")
+                return
+        
+        # Resume transcription if needed
+        if (download_status == "completed" and 
+            (transcription_status not in ["completed", "completed_with_errors"] or force)):
+            
+            console.print("[cyan]Resuming transcription...[/cyan]")
+            
+            try:
+                # Try importing the module to check if it's installed
+                import faster_whisper
+                has_whisper = True
+            except ImportError:
+                try:
+                    import whisper
+                    has_whisper = True
+                except ImportError:
+                    has_whisper = False
+            
+            if not has_whisper:
+                console.print("[bold yellow]Warning:[/bold yellow] Transcription libraries not installed.")
+                console.print("Install with: pip install faster-whisper")
+                return
+            
+            from videoinsight.core.transcription import transcribe_job, merge_transcriptions
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                # Start transcription task
+                task = progress.add_task("[cyan]Transcribing audio chunks...", total=None)
+                
+                # Start transcription in a separate thread so we can show progress
+                def run_transcription():
+                    try:
+                        transcribe_job(job_id)
+                    except Exception as e:
+                        console.print(f"[bold red]Transcription error:[/bold red] {str(e)}")
+                
+                trans_thread = threading.Thread(target=run_transcription)
+                trans_thread.start()
+                
+                # Monitor progress
+                last_status = None
+                while trans_thread.is_alive():
+                    job = get_job(job_id)
+                    if job:
+                        status = job["steps"]["transcription"]["status"]
+                        if status != last_status:
+                            if status == "completed":
+                                progress.update(task, description="[green]Transcription completed")
+                            elif status == "completed_with_errors":
+                                progress.update(task, description="[yellow]Transcription completed with some errors")
+                            elif status == "failed":
+                                progress.update(task, description="[red]Transcription failed")
+                            last_status = status
+                    time.sleep(1)
+                
+                trans_thread.join()
+            
+            # Merge transcriptions
+            console.print("[cyan]Merging transcriptions...[/cyan]")
+            try:
+                merged = merge_transcriptions(job_id)
+                if merged:
+                    console.print("[bold green]Transcriptions merged successfully[/bold green]")
+                    
+                    # Save transcription to file
+                    from videoinsight.core.transcription import save_transcription_to_file
+                    output_path = job["output_path"]
+                    output_dir = os.path.dirname(output_path)
+                    if not output_dir:
+                        output_dir = "."
+                    
+                    # Save both raw transcript and final output
+                    transcript_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(output_path))[0]}_transcript.txt")
+                    result = save_transcription_to_file(job_id, transcript_path)
+                    
+                    if result:
+                        console.print(f"[bold green]Transcript saved:[/bold green] {transcript_path}")
+                else:
+                    console.print("[bold red]Error:[/bold red] Failed to merge transcriptions")
+            except Exception as e:
+                console.print(f"[bold red]Error merging transcriptions:[/bold red] {str(e)}")
+        
+        # Resume analysis if needed
+        if ((transcription_status == "completed" or transcription_status == "completed_with_errors") and 
+            (analysis_status != "completed" or force)):
+            console.print("[yellow]Analysis step not yet implemented.[/yellow]")
+            
+        # Resume markdown generation if needed
+        if (analysis_status == "completed" and 
+            (markdown_status != "completed" or force)):
+            console.print("[yellow]Markdown generation not yet implemented.[/yellow]")
+            
+        console.print(f"[bold]Job completed to stage:[/bold] {get_current_stage(job)}")
 
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
         sys.exit(1)
+
+
+def get_current_stage(job):
+    """Helper function to determine the current stage of a job."""
+    if job["steps"]["markdown"]["status"] == "completed":
+        return "markdown"
+    elif job["steps"]["analysis"]["status"] == "completed":
+        return "analysis"
+    elif job["steps"]["transcription"]["status"] in ["completed", "completed_with_errors"]:
+        return "transcription"
+    elif job["steps"]["download"]["status"] == "completed":
+        return "download"
+    else:
+        return "created"
 
 
 @app.command()
